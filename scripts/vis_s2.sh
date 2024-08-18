@@ -1,6 +1,6 @@
 #!/bin/bash
 CACHE=$1
-python train.py task=AllegroHandHora headless=False pipeline=gpu \
+python train.py task=AllegroHandHora headless=False pipeline=cpu \
 task.env.numEnvs=1 test=True \
 task.env.object.type=simple_tennis_ball \
 task.env.randomization.randomizeMass=False \
