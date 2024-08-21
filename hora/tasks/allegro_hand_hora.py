@@ -14,6 +14,9 @@ from isaacgym.torch_utils import to_torch, unscale, quat_apply, tensor_clamp, to
 from glob import glob
 from hora.utils.misc import tprint
 from .base.vec_task import VecTask
+from typing import Tuple
+from scipy.spatial.transform import Rotation
+import time
 
 
 class AllegroHandHora(VecTask):
@@ -142,6 +145,28 @@ class AllegroHandHora(VecTask):
         self.env_evaluated = 0
         self.max_evaluate_envs = 500000
 
+        # Global states
+        self.finger_to_idx = {"index": 5,
+                              "thumb": 10, "middle": 15, "ring": 20}
+        self.binary_state = {5: np.empty(0), 10: np.empty(
+            0), 15: np.empty(0), 20: np.empty(0)}
+        self.fingertip_t = {5: np.empty((0, 3)), 10: np.empty(
+            (0, 3)), 15: np.empty((0, 3)), 20: np.empty((0, 3))}
+        self.contact_t = {5: np.empty((0, 3)), 10: np.empty(
+            (0, 3)), 15: np.empty((0, 3)), 20: np.empty((0, 3))}
+
+        self.obj_se3_poses = np.empty((0, 4, 4))
+        self.allegro_joints = np.empty((0, 16))
+
+        # Hashing collision
+        self.hash_num = 10000
+        self.obj_id = self.rigid_body_states.shape[1] - 1
+        self.obj_offset = self.obj_id * self.hash_num
+
+        # Start timer
+        self.start_time = time.time()
+        print("Start time: ", self.start_time)
+
     def _create_envs(self, num_envs, spacing, num_per_row):
         self._create_ground_plane()
         lower = gymapi.Vec3(-spacing, -spacing, 0.0)
@@ -180,6 +205,7 @@ class AllegroHandHora(VecTask):
             self.allegro_hand_dof_upper_limits, device=self.device)
 
         hand_pose, obj_pose = self._init_object_pose()
+        self.init_allegro_se3_base(hand_pose)
 
         # compute aggregate size
         self.num_allegro_hand_bodies = self.gym.get_asset_rigid_body_count(
@@ -457,6 +483,7 @@ class AllegroHandHora(VecTask):
         self.reset_buf[:] = 0
         self._refresh_gym()
         self.compute_reward(self.actions)
+        self.log_state_info()
         env_ids = self.reset_buf.nonzero(as_tuple=False).squeeze(-1)
         if len(env_ids) > 0:
             self.reset_idx(env_ids)
@@ -689,6 +716,13 @@ class AllegroHandHora(VecTask):
         self.hand_asset = self.gym.load_asset(
             self.sim, asset_root, hand_asset_file, hand_asset_options)
 
+        print("Hand asset = ", self.gym.get_asset_rigid_body_dict(self.hand_asset))
+
+        self.fingertip_handles = [
+            self.gym.find_asset_rigid_body_index(self.hand_asset, name) for name in
+            ['link_3.0_tip', 'link_15.0_tip', 'link_7.0_tip', 'link_11.0_tip']
+        ]  # index, thumb, middle, ring
+
         # load object asset
         self.object_asset_list = []
         for object_type in self.object_type_list:
@@ -724,6 +758,189 @@ class AllegroHandHora(VecTask):
             object_z -= 0.02
         object_start_pose.p.z = object_z
         return allegro_hand_start_pose, object_start_pose
+
+    def log_state_info(self):
+        """
+        Update global data for contact state, fingertip poses, allegro_pose etc.
+        Most of the data (e.g., self.object_pos's first dimension is env_num), but here we are assuming env_num = 1,
+        so preprocess the data to fit the global data format.
+        """
+        envs_contacts = [self.gym.get_env_rigid_contacts(
+            env) for env in self.envs]
+
+        binary_state, fingertip_t, contact_t = self.update_contacts(
+            envs_contacts)
+
+        for finger_idx in self.finger_to_idx.values():
+            self.binary_state[finger_idx] = np.append(
+                self.binary_state[finger_idx], binary_state[finger_idx])
+            self.fingertip_t[finger_idx] = np.vstack(
+                (self.fingertip_t[finger_idx], fingertip_t[finger_idx]))
+            self.contact_t[finger_idx] = np.vstack(
+                (self.contact_t[finger_idx], contact_t[finger_idx]))
+
+        # Save object SE(3) pose
+        obj_t = self.object_pos.detach().cpu().numpy().squeeze()
+        assert obj_t.shape == (3,)
+        obj_q = self.object_rot.detach().cpu().numpy().squeeze()
+        assert obj_q.shape == (4,)
+        obj_se3 = get_se3_from_quat_pos(obj_q, obj_t)
+        self.obj_se3_poses = np.concatenate(
+            (self.obj_se3_poses, obj_se3), axis=0)
+        # print(f"obj_se3_poses: {self.obj_se3_poses}")
+
+        # Save allegro joint states
+        allegro_joints = self.allegro_hand_dof_pos.detach().cpu().numpy().squeeze()
+        allegro_joints = swap_allegro_joints(allegro_joints)
+        self.allegro_joints = np.vstack((self.allegro_joints, allegro_joints))
+
+    def save_state_info(self):
+        """
+        Save the global data to the file.
+        Args: file_path: str, the file path to save the data.
+        Data to be saved: binary_state, fingertip_t, contact_t, obj_se3_poses, allegro_joints, allegro_se3_pose (static)
+        """
+        data = {
+            "binary_state": self.binary_state,
+            "fingertip_t": self.fingertip_t,
+            "contact_t": self.contact_t,
+            "obj_se3_poses": self.obj_se3_poses,
+            "allegro_joints": self.allegro_joints,
+            "allegro_se3_pose": self.allegro_se3_pose
+        }
+
+        # Check data size
+        for finger_idx in self.finger_to_idx.values():
+            frame_cnt = len(self.binary_state[finger_idx])
+            assert frame_cnt == len(
+                self.fingertip_t[finger_idx])
+            assert frame_cnt == len(
+                self.contact_t[finger_idx])
+
+        print("frame_cnt: ", frame_cnt)
+        assert len(self.obj_se3_poses) == frame_cnt
+        assert len(self.allegro_joints) == frame_cnt
+        assert len(self.allegro_se3_pose) == 1
+
+        data_dir = os.path.join(self.config["save_path"])
+        obj_name = self.config['env']['object']['type']
+        obj_dir = os.path.join(data_dir, obj_name)
+
+        if os.path.isdir(obj_dir):
+            print("obj_dir exists: ", obj_dir)
+        else:
+            print("obj_dir does not exist, creating: ", obj_dir)
+            os.mkdir(obj_dir)
+
+        file_num = len(os.listdir(obj_dir))
+        file_path = os.path.join(obj_dir, f"rot_{obj_name}_{file_num}.npy")
+
+        end_time = time.time()
+        duration = end_time - self.start_time
+
+        # Save frame count and time info
+        data["start_time"] = self.start_time
+        data["end_time"] = end_time
+        data["duration"] = duration
+        data["frame_cnt"] = frame_cnt
+
+        with open(file_path, 'wb') as f:
+            np.save(f, data)
+
+        return "Saved data to: ", file_path
+
+    def update_contacts(self, envs_contacts):
+        """
+        Update current contact location, binary contact state, fingertip poses.
+        This function should not update global variables, but only return the updated states.
+        Args: envs_contacts: [env0_contacts, env1_contacts, ...] list of contacts
+        Return: binary_state: {5: False, 10: False, 15: False, 20: False}
+        t: {5: np.zeros(3), 10: np.zeros(3), 15: np.zeros(3), 20: np.zeros(3)}
+                contact_pos: {5: np.zeros(3), 10: np.zeros(3), 15: np.zeros(3), 20: np.zeros(3)}
+        """
+        def contact_array_from_env_contact(env_contact: np.ndarray) -> Tuple[np.ndarray]:
+            """
+            env_contact: (from env_contact.dtype)
+                env0, env1, body0, body1, local_pos0,local_pos1, min_dist,
+                initial_overlap,normal, offset0, offset1, lam, lambda_friction,
+                friction, torsion_friction, rolling_friction
+            """
+            body0 = env_contact[2]  # object
+            body1 = env_contact[3]  # finger
+            local_pos0 = env_contact[4]
+            local_pos1 = env_contact[5]
+            lam = env_contact[11]  # contact force magnitude
+            normal = env_contact[8]  # normal body0 -> body1 in world frame
+            return (
+                body0,
+                body1,
+                local_pos0[0],
+                local_pos0[1],
+                local_pos0[2],
+                local_pos1[0],
+                local_pos1[1],
+                local_pos1[2],
+                lam,
+                normal[0],
+                normal[1],
+                normal[2],
+            )
+
+        # _t means translational component
+        binary_state = {5: 0, 10: 0, 15: 0, 20: 0}
+        fingertip_t = {5: np.zeros(3), 10: np.zeros(
+            3), 15: np.zeros(3), 20: np.zeros(3)}
+        contact_t = {5: np.zeros(3), 10: np.zeros(
+            3), 15: np.zeros(3), 20: np.zeros(3)}
+
+        contact_codition = []
+
+        for i, contact_list in enumerate(envs_contacts):
+            contact_codition.append(0)
+            for contact in contact_list:
+                parsed_contact = contact_array_from_env_contact(contact)
+                # object, finger
+                body0, body1 = parsed_contact[0], parsed_contact[1]
+                # Check if indeed is object, finger collision, body1 is the finger idx
+                if int(body0) == self.obj_id and int(body1) in self.finger_to_idx.values():
+                    offset_body_0 = np.array(
+                        [parsed_contact[2], parsed_contact[3], parsed_contact[4]])
+                    offset_body_1 = np.array(
+                        [parsed_contact[5], parsed_contact[6], parsed_contact[7]])
+                    body0_pos = self.rigid_body_states[i, body0, :3]
+                    body0_quat = self.rigid_body_states[i, body0, 3:7]
+                    body1_pos = self.rigid_body_states[i, body1, :3]
+                    body1_quat = self.rigid_body_states[i, body1, 3:7]
+                    c0_pos = quat_apply(body0_quat, torch.from_numpy(
+                        offset_body_0.astype(np.float32))) + body0_pos
+                    c1_pos = quat_apply(body1_quat, torch.from_numpy(
+                        offset_body_1.astype(np.float32))) + body1_pos
+                    # print(
+                    #     f"c1_pos:{c1_pos}, body1_pos:{body1_pos}")
+                    normal = np.array(
+                        [parsed_contact[9], parsed_contact[10], parsed_contact[11]])
+                    lam = parsed_contact[8]
+                    # print(f"lam: {lam}, l2 normal: {np.linalg.norm(normal)}")
+                    # self.draw_contact(i, c1_pos, normal, lam)
+                    # Update current binary contacts
+                    finger_idx = int(body1)
+                    binary_state[finger_idx] = 1
+                    fingertip_t[finger_idx] = body1_pos.numpy()
+                    contact_t[finger_idx] = c1_pos.numpy()
+
+        return binary_state, fingertip_t, contact_t
+
+    def init_allegro_se3_base(self, hand_pose: gymapi.Transform) -> np.array:
+        """
+        The base pose of the allegro hand is the pose of the palm, 
+        which should not change during the simulation.
+
+        Args: hand_pose: gymapi.Transform
+        """
+        allegro_q = np.array(
+            [hand_pose.r.x, hand_pose.r.y, hand_pose.r.z, hand_pose.r.w])
+        allegro_t = np.array([hand_pose.p.x, hand_pose.p.y, hand_pose.p.z])
+        self.allegro_se3_pose = get_se3_from_quat_pos(allegro_q, allegro_t)
 
 
 def compute_hand_reward(
@@ -771,3 +988,27 @@ def quat_to_axis_angle(quaternions: torch.Tensor) -> torch.Tensor:
         0.5 - (angles[small_angles] * angles[small_angles]) / 48
     )
     return quaternions[..., :3] / sin_half_angles_over_angles
+
+
+def get_se3_from_quat_pos(obj_q: np.array, obj_t: np.array) -> np.array:
+    """
+    Convert quaternion and position to SE3 matrix.
+    Args:
+        obj_q: quaternion of shape (4,), assuming to be in [x, y, z, w] order
+        obj_t: position of shape (3,)
+    Returns:    SE3 matrix tensor of shape (..., 4, 4)
+    """
+    T = np.eye(4)
+    # from_quat is taking in [x, y, z, w] order, so scalar first is default False
+    T[:3, :3] = Rotation.from_quat(obj_q).as_matrix()
+    T[:3, 3] = obj_t
+    return np.expand_dims(T, axis=0)
+
+
+def swap_allegro_joints(allegro_joints):
+    """For some reason, the joints need to be swapped"""
+    new_joints = allegro_joints.copy()
+    new_joints[[4, 5, 6, 7]] = allegro_joints[[8, 9, 10, 11]]
+    new_joints[[12, 13, 14, 15]] = allegro_joints[[4, 5, 6, 7]]
+    new_joints[[8, 9, 10, 11]] = allegro_joints[[12, 13, 14, 15]]
+    return new_joints

@@ -3,6 +3,9 @@ name: AllegroHandHora
 physics_engine: ${..physics_engine}
 on_evaluation: False
 
+# set the directory where the contact, allegro data is saved
+save_path: data/rotation
+
 env:
   # environment basic
   numEnvs: ${resolve_default:16384,${...num_envs}}
@@ -16,7 +19,7 @@ env:
 
   controller:
     torque_control: True
-    controlFrequencyInv: 6  # 20Hz
+    controlFrequencyInv: 6 # 20Hz
     pgain: 3
     dgain: 0.1
 
@@ -25,7 +28,7 @@ env:
   clipObservations: 5.0
   clipActions: 1.0
   reset_height_threshold: 0.645
-  grasp_cache_name: 'internal_allegro'
+  grasp_cache_name: "internal_allegro"
 
   # Random forces applied to the object
   forceScale: 0.0
@@ -62,8 +65,8 @@ env:
     # if scale_list_init is True, randomizeScaleLower and randomizeScaleUpper is not useful
     scaleListInit: True
     randomizeScaleList: [0.7, 0.72, 0.74, 0.76, 0.78, 0.8, 0.82, 0.84, 0.86]
-    randomizeScaleLower: 0.75  # only useful when not scaleListInit
-    randomizeScaleUpper: 0.8  # only useful when not scaleListInit
+    randomizeScaleLower: 0.75 # only useful when not scaleListInit
+    randomizeScaleUpper: 0.8 # only useful when not scaleListInit
     randomizePDGains: True
     randomizePGainLower: 2.9
     randomizePGainUpper: 3.1
@@ -79,11 +82,11 @@ env:
     enableObjFriction: True
 
   object:
-    type: 'block' # can be block, egg or pen
+    type: "block" # can be block, egg or pen
     sampleProb: [1.0]
 
   asset:
-    handAsset: 'assets/allegro/allegro_internal.urdf'
+    handAsset: "assets/allegro/allegro_internal.urdf"
 
   # set to True if you use camera sensors in the environment
   enableCameraSensors: False
@@ -91,7 +94,7 @@ env:
 sim:
   dt: 0.0083333 # 120 Hz
   substeps: 1
-  up_axis: 'z'
+  up_axis: "z"
   use_gpu_pipeline: ${eq:${...pipeline},'gpu'}
   gravity: [0.0, 0.0, -9.81]
   physx:
