@@ -338,8 +338,8 @@ class VecTask(Env):
         if self.viewer:
             # check for window closed
             if self.gym.query_viewer_has_closed(self.viewer):
-                print('*** Viewer has been closed, save you file here!!!!')
-                print(self.priv_info_dict)
+                print('*** Viewer has been closed, save you file here ***')
+                print(self.save_state_info())
                 sys.exit()
 
             # check for keyboard events

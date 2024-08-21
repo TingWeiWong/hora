@@ -676,7 +676,8 @@ class AllegroHandHora(VecTask):
         hand_asset_options = gymapi.AssetOptions()
         hand_asset_options.flip_visual_attachments = False
         hand_asset_options.fix_base_link = True
-        hand_asset_options.collapse_fixed_joints = True
+        # If collapse_fixed_joints set to True, the fingertips are not loaded someshow
+        hand_asset_options.collapse_fixed_joints = False
         hand_asset_options.disable_gravity = True
         hand_asset_options.thickness = 0.001
         hand_asset_options.angular_damping = 0.01
