@@ -785,6 +785,7 @@ class AllegroHandHora(VecTask):
         obj_q = self.object_rot.detach().cpu().numpy().squeeze()
         assert obj_q.shape == (4,)
         obj_se3 = get_se3_from_quat_pos(obj_q, obj_t)
+        obj_se3 = np.expand_dims(obj_se3, axis=0)
         self.obj_se3_poses = np.concatenate(
             (self.obj_se3_poses, obj_se3), axis=0)
         # print(f"obj_se3_poses: {self.obj_se3_poses}")
@@ -820,7 +821,7 @@ class AllegroHandHora(VecTask):
         print("frame_cnt: ", frame_cnt)
         assert len(self.obj_se3_poses) == frame_cnt
         assert len(self.allegro_joints) == frame_cnt
-        assert len(self.allegro_se3_pose) == 1
+        assert self.allegro_se3_pose.shape == (4, 4)
 
         data_dir = os.path.join(self.config["save_path"])
         obj_name = self.config['env']['object']['type']
@@ -1002,7 +1003,7 @@ def get_se3_from_quat_pos(obj_q: np.array, obj_t: np.array) -> np.array:
     # from_quat is taking in [x, y, z, w] order, so scalar first is default False
     T[:3, :3] = Rotation.from_quat(obj_q).as_matrix()
     T[:3, 3] = obj_t
-    return np.expand_dims(T, axis=0)
+    return T
 
 
 def swap_allegro_joints(allegro_joints):
