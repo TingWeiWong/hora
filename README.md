@@ -1,5 +1,10 @@
 # In-Hand Object Rotation Codebase
 
+To clear memomy between different runs:
+```
+sudo sh -c 'echo 1 > /proc/sys/vm/drop_caches'
+```
+
 This codebase is initially built for code release of the following paper:
 
 <b>In-Hand Object Rotation via Rapid Motor Adaptation</b> <br>
