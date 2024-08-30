@@ -649,7 +649,7 @@ class AllegroHandHora(VecTask):
             if 'cuboid' in prim:
                 subset_name = self.object_type.split('_')[-1]
                 cuboids = sorted(
-                    glob(f'../assets/cuboid/{subset_name}/*.urdf'))
+                    glob(f'assets/{subset_name}/default/*.urdf'))
                 cuboid_list = [f'cuboid_{i}' for i in range(len(cuboids))]
                 self.object_type_list += cuboid_list
                 for i, name in enumerate(cuboids):
@@ -660,7 +660,7 @@ class AllegroHandHora(VecTask):
             elif 'cylinder' in prim:
                 subset_name = self.object_type.split('_')[-1]
                 cylinders = sorted(
-                    glob(f'assets/cylinder/{subset_name}/*.urdf'))
+                    glob(f'assets/{subset_name}/default/*.urdf'))
                 cylinder_list = [
                     f'cylinder_{i}' for i in range(len(cylinders))]
                 self.object_type_list += cylinder_list
