@@ -843,6 +843,7 @@ class AllegroHandHora(VecTask):
         data["start_time"] = self.start_time
         data["end_time"] = end_time
         data["duration"] = duration
+        data["dt"] = self.dt
         data["frame_cnt"] = frame_cnt
 
         with open(file_path, 'wb') as f:
@@ -912,10 +913,18 @@ class AllegroHandHora(VecTask):
                     body0_quat = self.rigid_body_states[i, body0, 3:7]
                     body1_pos = self.rigid_body_states[i, body1, :3]
                     body1_quat = self.rigid_body_states[i, body1, 3:7]
+
+                    # c0_pos and c1_pos are almost the same in (x,y) and same in z
                     c0_pos = quat_apply(body0_quat, torch.from_numpy(
                         offset_body_0.astype(np.float32))) + body0_pos
                     c1_pos = quat_apply(body1_quat, torch.from_numpy(
                         offset_body_1.astype(np.float32))) + body1_pos
+
+                    # Get midpoint
+                    c0_pos_np = c0_pos.detach().cpu().numpy()
+                    c1_pos_np = c1_pos.detach().cpu().numpy()
+                    c_mid_pos_np = (c0_pos_np + c1_pos_np) / 2
+                    body1_pos_np = body1_pos.detach().cpu().numpy()
                     # print(
                     #     f"c1_pos:{c1_pos}, body1_pos:{body1_pos}")
                     normal = np.array(
@@ -926,8 +935,11 @@ class AllegroHandHora(VecTask):
                     # Update current binary contacts
                     finger_idx = int(body1)
                     binary_state[finger_idx] = 1
-                    fingertip_t[finger_idx] = body1_pos.numpy()
-                    contact_t[finger_idx] = c1_pos.numpy()
+                    fingertip_t[finger_idx] = body1_pos_np
+                    contact_t[finger_idx] = c_mid_pos_np
+
+                    obj_t = self.object_pos.detach().cpu().numpy().squeeze()
+                    dist = np.linalg.norm(c_mid_pos_np - obj_t)
 
         return binary_state, fingertip_t, contact_t
 
